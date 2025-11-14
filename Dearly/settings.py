@@ -9,23 +9,37 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+import environ
 from pathlib import Path
+from datetime import timedelta
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# 프로젝트 내부 경로 설정 (예: BASE_DIR / 'subdir')
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+env = environ.Env(
+    DEBUG=(bool, False),
+    ALLOWED_HOSTS=(list, []),
+    CORS_ALLOWED_ORIGINS=(list, []),
+    CSRF_TRUSTED_ORIGINS=(list, []),
+    SITE_ID=(int, 1),
+    FRONTEND_URL=(str, 'http://localhost:5173'),  # 로컬 프론트엔드 기본값
+)
+if (BASE_DIR / ".env").exists():
+    environ.Env.read_env(BASE_DIR / ".env")
+
+# 프론트엔드 URL (카카오 로그인 리다이렉트용)
+FRONTEND_URL = env('FRONTEND_URL')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-u-w876^3srhjojzbdh2rm^uuk2k2940-160jj=d87g#a=itka4'
+SECRET_KEY = env("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env('DEBUG')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
+
 
 
 # Application definition
@@ -37,14 +51,46 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites', # sites framework 필요
+
+    'corsheaders',
+    'rest_framework',
+    # JWT
+    "rest_framework_simplejwt.token_blacklist", # 토큰 블랙리스트 기능 활성화
+    # Swagger (API 문서화)
+    'drf_spectacular',
+    # django-allauth (카카오 로그인)
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.kakao",
+    # 개발용 HTTPS (선택사항 - 필요시 주석 해제)
+    # 'django_extensions',
+    # 내 앱
+    'letterrooms',
+    'login',
+    'users',
+    'letters',
+    'friends',
+    'notices',
+    'notifications',
 ]
+
+SITE_ID = env("SITE_ID", default=1) 
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+] # django-allauth 사용을 위해 필요
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -102,9 +148,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'ko-kr'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Seoul'
 
 USE_I18N = True
 
@@ -115,8 +161,145 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles' # for collectstatic
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+REST_FRAMEWORK = {
+    # JWT 토큰 기반 인증
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",  # JWT 헤더 인증
+        "rest_framework.authentication.BasicAuthentication",           # Postman BasicAuth용
+        "rest_framework.authentication.SessionAuthentication",         # 로그인 세션용
+    ),
+    "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
+    # Swagger 스키마 설정
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+# drf-spectacular 설정
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Dearly API',
+    'DESCRIPTION': '디어리(Dearly) - 카카오 로그인 및 편지함 API',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # JWT 인증 설정
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SECURITY': [{'BearerAuth': []}],
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'BearerAuth': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    },
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+}
+
+# ============================================================
+# CORS 설정 (배포 시 403 에러 방지)
+# ============================================================
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=[
+        # 로컬 개발
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        # 배포 (백엔드)
+        "https://zihyuniz.shop",
+        "https://www.zihyuniz.shop",
+        # 배포 (프론트엔드)
+        "https://dearly-4thon.netlify.app",
+    ]
+)
+CORS_ALLOW_CREDENTIALS = True  # 쿠키 전송 허용
+
+# CSRF 설정 (배포 시 필수)
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[
+        # 로컬 개발
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        # 배포 (백엔드)
+        "https://zihyuniz.shop",
+        "https://www.zihyuniz.shop",
+        # 배포 (프론트엔드)
+        "https://dearly-4thon.netlify.app",
+    ]
+)
+
+# ============================================================
+# django-allauth 설정 (카카오 로그인)
+# ============================================================
+# 기본 설정
+ACCOUNT_USER_MODEL_USERNAME_FIELD = 'username'
+ACCOUNT_EMAIL_VERIFICATION = 'none'  # 이메일 인증 비활성화
+ACCOUNT_UNIQUE_EMAIL = True  # 이메일 중복 방지
+
+# 배포 환경에서 HTTPS 사용 (카카오 리다이렉트 URL이 https로 생성되도록)
+ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'https' if not DEBUG else 'http'
+
+# 소셜 로그인 관련 설정
+SOCIALACCOUNT_AUTO_SIGNUP = True  # 자동 회원가입
+SOCIALACCOUNT_EMAIL_VERIFICATION = 'none'  # 이메일 인증 불필요
+SOCIALACCOUNT_EMAIL_REQUIRED = False  # 소셜 로그인 시 이메일 선택
+SOCIALACCOUNT_STORE_TOKENS = True  # 소셜 로그인 토큰 저장 (선택사항)
+
+# 소셜 로그인 성공 후 리다이렉트 URL
+LOGIN_REDIRECT_URL = '/auth/kakao/done/'  # 카카오 로그인 성공 시 (백엔드 처리용)
+ACCOUNT_LOGOUT_REDIRECT_URL = '/'  # 로그아웃 후
+
+# 카카오 로그인 시 추가 정보 요청
+SOCIALACCOUNT_PROVIDERS = {
+    'kakao': {
+        'SCOPE': ['profile_nickname'],  # 요청할 정보 (이메일 권한 없음)
+        'APP': {
+            'client_id': env('KAKAO_CLIENT_ID', default=''),  # REST API 키
+            'secret': env('KAKAO_SECRET_KEY', default=''),  # 시크릿 키
+            'key': ''
+        },
+        'OAUTH_PKCE_ENABLED': False,
+    }
+}
+
+# ============================================================
+# 보안 설정 (개발/배포 환경 분리)
+# ============================================================
+# 개발 모드에서는 HTTPS 강제 비활성화
+SECURE_SSL_REDIRECT = False if DEBUG else True
+SESSION_COOKIE_SECURE = False if DEBUG else True
+CSRF_COOKIE_SECURE = False if DEBUG else True
+
+# 크로스 도메인 쿠키 설정 (카카오 로그인 등)
+# 프론트엔드(dearly-4thon.netlify.app)와 백엔드(zihyuniz.shop)가 다른 도메인일 때 필요
+SESSION_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+
+# CSRF 쿠키가 httponly가 아니어야 프론트에서 읽을 수 있음 (false가 기본값)
+CSRF_COOKIE_HTTPONLY = False
+
+# Nginx 프록시 사용 시 필수 설정 (배포 환경)
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    # 배포 시 추가 보안 설정
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+else:
+    SECURE_PROXY_SSL_HEADER = None
